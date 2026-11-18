@@ -31,7 +31,7 @@ jobs:
         with:
           repository: RikkaW/HiddenApi
           ref: ${{ env.HIDDEN_API_SHA }}
-          path: .hiddenapi
+          path: HiddenApi
           persist-credentials: false
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -41,7 +41,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
       - name: Build HiddenApi into mavenLocal
-        working-directory: .hiddenapi
+        working-directory: HiddenApi
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
           ./gradlew publishToMavenLocal
