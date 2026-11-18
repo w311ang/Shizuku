@@ -4,10 +4,20 @@ on:
   push:
     paths-ignore:
       - '.github/ISSUE_TEMPLATE'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # RikkaW/HiddenApi master after #11 (Android 17 fixes); 4.5.0 is not published to Maven Central
+  HIDDEN_API_SHA: 08db66c03e0b9470bfae344b9798471cd4ccf614
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      releaseName: ${{ steps.buildWithGradle.outputs.releaseName }}
 
     steps:
       - name: Checkout
@@ -15,40 +25,72 @@ jobs:
         with:
           submodules: 'recursive'
           fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout HiddenApi
+        uses: actions/checkout@v4
+        with:
+          repository: RikkaW/HiddenApi
+          ref: ${{ env.HIDDEN_API_SHA }}
+          path: .hiddenapi
+          persist-credentials: false
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Build HiddenApi into mavenLocal
+        working-directory: .hiddenapi
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+          ./gradlew publishToMavenLocal
+          ls ~/.m2/repository/dev/rikka/hidden/compat ~/.m2/repository/dev/rikka/hidden/stub
       - name: Write key
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/master'
         run: |
           echo KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }} > signing.properties
           echo KEYSTORE_ALIAS=${{ secrets.KEYSTORE_ALIAS }} >> signing.properties
           echo KEYSTORE_ALIAS_PASSWORD='${{ secrets.KEYSTORE_ALIAS_PASSWORD }}' >> signing.properties
           echo KEYSTORE_FILE=../key.jks >> signing.properties
           echo ${{ secrets.KEYSTORE }} | base64 --decode > key.jks
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          dependency-graph: generate-and-submit
-          build-scan-publish: true
-          build-scan-terms-of-use-url: "https://gradle.com/terms-of-service"
-          build-scan-terms-of-use-agree: "yes"
       - name: Build with Gradle
         id: buildWithGradle
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
           echo 'android.sdk.channel=3' >> gradle.properties
           echo 'android.native.buildOutput=verbose' >> gradle.properties
           echo 'org.gradle.caching=true' >> gradle.properties
           echo 'org.gradle.parallel=true' >> gradle.properties
           ./gradlew :manager:assemble
           releaseName=`ls manager/build/outputs/apk/release/shizuku*-v*-release.apk | awk -F '(/|-release.apk)' '{print $6}'` && echo "releaseName=$releaseName" >> $GITHUB_OUTPUT
-      - name: Upload release
-        if: success()
+      - name: Remove key
+        if: always()
+        run: rm -f key.jks signing.properties
+      - name: Upload build outputs
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.buildWithGradle.outputs.releaseName }}
           path: "manager/build/outputs"
           compression-level: 9
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.releaseName }}
+          path: outputs
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NAME: ${{ needs.build.outputs.releaseName }}
+        run: |
+          apk=$(ls outputs/apk/release/shizuku*-v*-release.apk)
+          notes="Upstream Shizuku ${GITHUB_SHA::8} + dev.rikka.hidden 4.5.0 built from RikkaW/HiddenApi@${HIDDEN_API_SHA::8} (Android 17 authorized-app list fix). Signed with w311ang's own key; must uninstall the official build first."
+          gh release create "$RELEASE_NAME" "$apk" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$RELEASE_NAME" --notes "$notes" \
+            || gh release upload "$RELEASE_NAME" "$apk" -R "$GITHUB_REPOSITORY" --clobber
