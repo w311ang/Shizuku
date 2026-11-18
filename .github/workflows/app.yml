@@ -16,8 +16,6 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    outputs:
-      releaseName: ${{ steps.buildWithGradle.outputs.releaseName }}
 
     steps:
       - name: Checkout
@@ -83,14 +81,14 @@ jobs:
       - name: Download build outputs
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build.outputs.releaseName }}
           path: outputs
+          merge-multiple: true
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_NAME: ${{ needs.build.outputs.releaseName }}
         run: |
           apk=$(ls outputs/apk/release/shizuku*-v*-release.apk)
+          RELEASE_NAME=$(basename "$apk" -release.apk)
           notes="Upstream Shizuku ${GITHUB_SHA::8} + dev.rikka.hidden 4.5.0 built from RikkaW/HiddenApi@${HIDDEN_API_SHA::8} (Android 17 authorized-app list fix). Signed with w311ang's own key; must uninstall the official build first."
           gh release create "$RELEASE_NAME" "$apk" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$RELEASE_NAME" --notes "$notes" \
             || gh release upload "$RELEASE_NAME" "$apk" -R "$GITHUB_REPOSITORY" --clobber
