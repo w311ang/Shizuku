@@ -1,4 +1,4 @@
 [submodule "api"]
 	path = api
-	url = git@github.com:RikkaApps/Shizuku-API.git
-	branch = master
+	url = git@github.com:w311ang/Shizuku-API.git
+	branch = rish-stderr-fix
